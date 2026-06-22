@@ -1,0 +1,64 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<LangVersion>Latest</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>disable</Nullable>
+		<RootNamespace>ExpandedTradingFramework</RootNamespace>
+		<AssemblyName>ExpandedTradingFramework</AssemblyName>
+		<IsPackable>false</IsPackable>
+		<AssemblyVersion>1.0.0.0</AssemblyVersion>
+		<FileVersion>1.0.0.0</FileVersion>
+		<NeutralLanguage>en-US</NeutralLanguage>
+		<Platforms>AnyCPU;x64</Platforms>
+		<AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+		<EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<TheLongDarkPath>D:\SteamLibrary\steamapps\common\TheLongDark</TheLongDarkPath>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Reference Include="ModData">
+			<HintPath>$(TheLongDarkPath)\Mods\ModData.dll</HintPath>
+		</Reference>
+		<Reference Include="ModSettings">
+			<HintPath>$(TheLongDarkPath)\Mods\ModSettings.dll</HintPath>
+		</Reference>
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="Core.cs" />
+		<Compile Include="Settings.cs" />
+		<Compile Include="Framework\CustomTradeDefinition.cs" />
+		<Compile Include="Framework\CustomTradeIcon.cs" />
+		<Compile Include="Framework\CustomTradeFactory.cs" />
+		<Compile Include="Framework\CustomTradeRegistry.cs" />
+		<Compile Include="Framework\CustomTradeRuntime.cs" />
+		<Compile Include="Framework\ExpandedTradingSaveDataProxy.cs" />
+		<Compile Include="Framework\ExpandedTradingSaveDataManager.cs" />
+		<Compile Include="Framework\GearResolver.cs" />
+		<Compile Include="Framework\LiquidResolver.cs" />
+		<Compile Include="Patches\CustomTradePatches.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Waltz.Modding.TLD.Il2CppAssemblies.Windows" Version="2.52.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="System.Reflection" />
+		<Using Include="System.Diagnostics.CodeAnalysis" />
+		<Using Include="Il2Cpp" />
+		<Using Include="HarmonyLib" />
+		<Using Include="MelonLoader" />
+		<Using Include="UnityEngine" />
+		<Using Include="ModData" />
+		<Using Include="ModSettings" />
+	</ItemGroup>
+
+	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
+		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(TheLongDarkPath)/Mods" />
+	</Target>
+</Project>
