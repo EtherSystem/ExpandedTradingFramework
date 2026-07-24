@@ -92,7 +92,7 @@ namespace ExpandedTradingFramework.Framework
 
         private static string DescribeTextureState(Texture2D icon)
         {
-            if (icon == null) return "null";
+            if (!CustomTradeIconResolver.IsTextureAlive(icon)) return "null or destroyed";
 
             try
             {
@@ -513,9 +513,11 @@ namespace ExpandedTradingFramework.Framework
             }
 
             int cleared = s_SaveData.SelectedNormalTradeIds?.Count ?? 0;
+            int clearedAppearanceRolls = s_SaveData.AppearanceRolls?.Count ?? 0;
             s_SaveData.SelectedNormalTradeIds?.Clear();
+            s_SaveData.AppearanceRolls?.Clear();
             s_SaveData.LastNormalVanillaInventorySignature = currentSignature;
-            DiagnosticLog($"Normal trade selection cache invalidated from {source}: vanilla normal trade signature changed. Cleared cached custom draw-pool selection:{cleared}. Previous:{DescribeNormalInventorySignature(previousSignature)}. Current:{DescribeNormalInventorySignature(currentSignature)}.");
+            DiagnosticLog($"Normal trade selection cache invalidated from {source}: vanilla normal trade signature changed. Cleared cached custom draw-pool selection:{cleared}, appearance rolls:{clearedAppearanceRolls}. Previous:{DescribeNormalInventorySignature(previousSignature)}. Current:{DescribeNormalInventorySignature(currentSignature)}.");
         }
 
         private static string BuildNormalVanillaInventorySignature(Il2CppTradeExchangeDataList cleanVanillaTrades)
@@ -547,17 +549,19 @@ namespace ExpandedTradingFramework.Framework
             EnsureSaveDataLoaded(source);
 
             int selectedCount = s_SaveData.SelectedNormalTradeIds?.Count ?? 0;
+            int appearanceRollCount = s_SaveData.AppearanceRolls?.Count ?? 0;
             bool hadSignature = !string.IsNullOrEmpty(s_SaveData.LastNormalVanillaInventorySignature);
-            if (selectedCount <= 0 && (!clearVanillaSignature || !hadSignature))
+            if (selectedCount <= 0 && appearanceRollCount <= 0 && (!clearVanillaSignature || !hadSignature))
             {
                 DiagnosticLog($"Normal trade selection cache invalidation from {source} had nothing to clear. clearVanillaSignature:{clearVanillaSignature}.");
                 return;
             }
 
             s_SaveData.SelectedNormalTradeIds?.Clear();
+            s_SaveData.AppearanceRolls?.Clear();
             if (clearVanillaSignature) s_SaveData.LastNormalVanillaInventorySignature = "";
 
-            DiagnosticLog($"Normal trade selection cache invalidated from {source}. Cleared cached custom draw-pool selection:{selectedCount}. Cleared vanilla signature:{clearVanillaSignature && hadSignature}.");
+            DiagnosticLog($"Normal trade selection cache invalidated from {source}. Cleared cached custom draw-pool selection:{selectedCount}, appearance rolls:{appearanceRollCount}. Cleared vanilla signature:{clearVanillaSignature && hadSignature}.");
             if (save) SaveFrameworkState(source);
         }
 
@@ -628,9 +632,9 @@ namespace ExpandedTradingFramework.Framework
 
             for (int i = 0; i < activeTrade.m_ExchangeStates.Count; i++)
             {
-                ActiveTradeState.ActiveExchangeState exchangeState = activeTrade.m_ExchangeStates[i];
-                if (exchangeState == null) continue;
-                if (!TryGetTrade(exchangeState.m_Exchange, out CustomTradeRuntime runtime)) continue;
+                TradeExchangeData exchange = activeTrade.m_ExchangeStates[i]?.m_Exchange;
+                if (exchange == null) continue;
+                if (!TryGetTrade(exchange, out CustomTradeRuntime runtime)) return true;
                 if (runtime.HasPhysicalReward) return true;
             }
 
@@ -2130,6 +2134,39 @@ namespace ExpandedTradingFramework.Framework
             }
         }
 
+        internal static void RestoreTradeSelectionRequirementVisibility(Panel_TradeSelection panel)
+        {
+            try
+            {
+                Il2CppSystem.Collections.Generic.List<TradeExchangeRequirementItem> slots = panel?.m_RequirementItems;
+                if (slots == null) return;
+
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    GameObject slotObject = slots[i]?.gameObject;
+                    if (slotObject != null) slotObject.SetActive(true);
+                }
+
+                GameObject firstSlot = slots.Count > 0 ? slots[0]?.gameObject : null;
+                if (firstSlot == null) return;
+
+                var textures = firstSlot.GetComponentsInChildren<UITexture>(true);
+                for (int i = 0; i < textures.Length; i++)
+                {
+                    GameObject textureObject = textures[i]?.gameObject;
+                    if (textureObject != null) textureObject.SetActive(true);
+                }
+
+                var sprites = firstSlot.GetComponentsInChildren<UISprite>(true);
+                for (int i = 0; i < sprites.Length; i++)
+                {
+                    GameObject spriteObject = sprites[i]?.gameObject;
+                    if (spriteObject != null) spriteObject.SetActive(true);
+                }
+            }
+            catch { }
+        }
+
         private static void HideRequirementSlotIcons(GameObject root)
         {
             if (root == null) return;
@@ -2593,8 +2630,17 @@ namespace ExpandedTradingFramework.Framework
 
             if (costRuntime.HasCustomIcon)
             {
+                if (!CustomTradeIconResolver.IsTextureAlive(costRuntime.Icon))
+                {
+                    costRuntime.Icon = CustomTradeIconResolver.Resolve(costRuntime.Definition?.DisplayIcon, costRuntime.TradeDefinition?.Id ?? "unknown", $"runtime requirement '{costRuntime.ReferenceKey}'");
+                    if (IsCategoryCost(costRuntime) && GearResolver.IsUnityObjectAlive(costRuntime.Category))
+                    {
+                        try { costRuntime.Category.m_CategoryIcon = costRuntime.Icon; } catch { }
+                    }
+                }
+
                 LogCostIconResolutionOnce(costRuntime, "custom-display-icon", costRuntime.Icon);
-                return costRuntime.Icon;
+                return CustomTradeIconResolver.IsTextureAlive(costRuntime.Icon) ? costRuntime.Icon : null;
             }
 
             if (IsCategoryCost(costRuntime)
@@ -2606,12 +2652,13 @@ namespace ExpandedTradingFramework.Framework
                 return assigned;
             }
 
-            if (costRuntime.Icon != null)
+            if (CustomTradeIconResolver.IsTextureAlive(costRuntime.Icon))
             {
                 LogCostIconResolutionOnce(costRuntime, "cached-runtime-icon", costRuntime.Icon);
                 return costRuntime.Icon;
             }
 
+            costRuntime.Icon = null;
             Texture2D icon = TryResolveCostIcon(costRuntime);
             if (icon != null)
             {
@@ -2649,7 +2696,7 @@ namespace ExpandedTradingFramework.Framework
                 costRuntime.CostPrefab = prefab;
                 try
                 {
-                    costRuntime.GearItemData ??= prefab?.GearItemData;
+                    if (!GearResolver.IsUnityObjectAlive(costRuntime.GearItemData)) costRuntime.GearItemData = prefab?.GearItemData;
                 }
                 catch { }
 
@@ -2686,7 +2733,7 @@ namespace ExpandedTradingFramework.Framework
 
             try
             {
-                if (costRuntime.Category?.m_CategoryIcon != null) return AssignCostIcon(costRuntime, costRuntime.Category.m_CategoryIcon);
+                if (GearResolver.IsUnityObjectAlive(costRuntime.Category) && CustomTradeIconResolver.IsTextureAlive(costRuntime.Category.m_CategoryIcon)) return AssignCostIcon(costRuntime, costRuntime.Category.m_CategoryIcon);
             }
             catch { }
 
@@ -2712,14 +2759,14 @@ namespace ExpandedTradingFramework.Framework
 
         private static Texture2D AssignCostIcon(CustomTradeCostRuntime costRuntime, Texture2D icon)
         {
-            if (costRuntime == null || icon == null) return null;
+            if (costRuntime == null || !CustomTradeIconResolver.IsTextureAlive(icon)) return null;
 
             costRuntime.Icon = icon;
             if (IsCategoryCost(costRuntime))
             {
                 try
                 {
-                    if (costRuntime.Category != null) costRuntime.Category.m_CategoryIcon = icon;
+                    if (GearResolver.IsUnityObjectAlive(costRuntime.Category)) costRuntime.Category.m_CategoryIcon = icon;
                 }
                 catch { }
             }
@@ -3222,25 +3269,27 @@ namespace ExpandedTradingFramework.Framework
             CategoryIcon categoryIcon = costRuntime.CategoryIcon;
             if (!IsVanillaCategoryIcon(categoryIcon)) return false;
 
-            if (s_VanillaCategoryIcons.TryGetValue(categoryIcon, out icon)) return icon != null;
+            if (s_VanillaCategoryIcons.TryGetValue(categoryIcon, out icon))
+            {
+                if (CustomTradeIconResolver.IsTextureAlive(icon)) return true;
+                s_VanillaCategoryIcons.Remove(categoryIcon);
+            }
 
             try
             {
-                TraderManager traderManager = GameManager.m_TraderManager;
-                if (traderManager != null)
-                {
-                    if (TryFindVanillaCategoryIcon(traderManager.GetAvailableTradeExchanges(), categoryIcon, out icon)
-                        || TryFindVanillaCategoryIcon(traderManager.GetSpecialRequests(), categoryIcon, out icon))
-                    {
-                        s_VanillaCategoryIcons[categoryIcon] = icon;
-                        return icon != null;
-                    }
-                }
-
                 if (TryFindVanillaCategoryIconFromLoadedCategoryAssets(categoryIcon, out icon))
                 {
                     s_VanillaCategoryIcons[categoryIcon] = icon;
-                    return icon != null;
+                    return true;
+                }
+
+                TraderState state = GameManager.m_TraderManager?.m_CurrentState;
+                if (state != null
+                    && (TryFindVanillaCategoryIcon(state.m_AvailableExchangesThisAurora, categoryIcon, out icon)
+                        || TryFindVanillaCategoryIcon(state.m_SpecialRequests, categoryIcon, out icon)))
+                {
+                    s_VanillaCategoryIcons[categoryIcon] = icon;
+                    return true;
                 }
             }
             catch { }
@@ -3261,7 +3310,7 @@ namespace ExpandedTradingFramework.Framework
                 for (int i = 0; i < categories.Length; i++)
                 {
                     ExchangeItemCategory category = categories[i];
-                    if (category == null || category.m_CategoryIcon == null) continue;
+                    if (!GearResolver.IsUnityObjectAlive(category) || !CustomTradeIconResolver.IsTextureAlive(category.m_CategoryIcon)) continue;
                     if (!DoesCategoryMatchRequestedIcon(category, categoryIcon)) continue;
 
                     icon = category.m_CategoryIcon;
@@ -3304,7 +3353,7 @@ namespace ExpandedTradingFramework.Framework
                 try
                 {
                     ExchangeItemCategory category = item.GetExchangeItemCategoryIfValid();
-                    if (category == null || category.m_CategoryIcon == null) continue;
+                    if (!GearResolver.IsUnityObjectAlive(category) || !CustomTradeIconResolver.IsTextureAlive(category.m_CategoryIcon)) continue;
                     if (!DoesCategoryMatchRequestedIcon(category, categoryIcon)) continue;
 
                     icon = category.m_CategoryIcon;

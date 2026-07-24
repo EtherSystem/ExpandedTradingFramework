@@ -1,7 +1,7 @@
 using ExpandedTradingFramework.Framework;
 using Il2CppTLD.Trader;
 
-[assembly: MelonInfo(typeof(ExpandedTradingFramework.Core), "Expanded Trading Framework", "1.0.0", "EtherSystem", null)]
+[assembly: MelonInfo(typeof(ExpandedTradingFramework.Core), "Expanded Trading Framework", "1.0.1", "EtherSystem", null)]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
 [assembly: VerifyLoaderVersion("0.7.2", true)]
 

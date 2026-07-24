@@ -1,4 +1,4 @@
-﻿namespace ExpandedTradingFramework.Framework
+namespace ExpandedTradingFramework.Framework
 {
     public enum CustomTradeIconSource
     {
@@ -17,6 +17,7 @@
             return new CustomTradeIcon();
         }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public static CustomTradeIcon CustomIcon(string path)
         {
             return new CustomTradeIcon
@@ -51,7 +52,11 @@
 
             Assembly ownerAssembly = icon.OwnerAssembly ?? Assembly.GetCallingAssembly();
             string cacheKey = BuildCacheKey(ownerAssembly, icon.Path);
-            if (s_LoadedIcons.TryGetValue(cacheKey, out Texture2D cached)) return cached;
+            if (s_LoadedIcons.TryGetValue(cacheKey, out Texture2D cached))
+            {
+                if (IsTextureAlive(cached)) return cached;
+                s_LoadedIcons.Remove(cacheKey);
+            }
 
             Texture2D loaded = TryLoadIcon(ownerAssembly, icon.Path, ownerId, usage);
             if (loaded == null)
@@ -64,6 +69,22 @@
             return loaded;
         }
 
+        internal static bool IsTextureAlive(Texture2D texture)
+        {
+            if (texture == null) return false;
+
+            try
+            {
+                _ = texture.GetInstanceID();
+                _ = texture.width;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static Texture2D TryLoadIcon(Assembly ownerAssembly, string path, string ownerId, string usage)
         {
             if (string.IsNullOrEmpty(path)) return null;
@@ -71,17 +92,28 @@
             byte[] bytes = TryReadFileIcon(ownerAssembly, path) ?? TryReadEmbeddedIcon(ownerAssembly, path);
             if (bytes == null || bytes.Length == 0) return null;
 
+            Texture2D texture = null;
             try
             {
-                Texture2D texture = new(2, 2, TextureFormat.RGBA32, false);
-                texture.name = $"ETF_CustomIcon_{SanitizeName(ownerId)}_{SanitizeName(usage)}";
-                if (!ImageConversion.LoadImage(texture, bytes, false)) return null;
+                texture = new Texture2D(2, 2, TextureFormat.RGBA32, false)
+                {
+                    name = $"ETF_CustomIcon_{SanitizeName(ownerId)}_{SanitizeName(usage)}",
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+
+                if (!ImageConversion.LoadImage(texture, bytes, false))
+                {
+                    UnityEngine.Object.Destroy(texture);
+                    return null;
+                }
+
                 texture.wrapMode = TextureWrapMode.Clamp;
                 texture.filterMode = FilterMode.Bilinear;
                 return texture;
             }
             catch (Exception e)
             {
+                if (texture != null) UnityEngine.Object.Destroy(texture);
                 Core.Log?.Error($"Custom icon decode failed for '{ownerId}' ({usage}) -> '{path}': {e.Message}");
                 return null;
             }
@@ -161,10 +193,13 @@
 
         private static Texture2D GetErrorIcon()
         {
-            if (s_ErrorIcon != null) return s_ErrorIcon;
+            if (IsTextureAlive(s_ErrorIcon)) return s_ErrorIcon;
 
-            Texture2D texture = new(64, 64, TextureFormat.RGBA32, false);
-            texture.name = "ETF_CustomIcon_ERROR_MissingOrInvalid";
+            Texture2D texture = new(64, 64, TextureFormat.RGBA32, false)
+            {
+                name = "ETF_CustomIcon_ERROR_MissingOrInvalid",
+                hideFlags = HideFlags.HideAndDontSave
+            };
             Color magenta = new(1f, 0f, 1f, 1f);
             Color black = new(0f, 0f, 0f, 1f);
             Color[] pixels = new Color[64 * 64];

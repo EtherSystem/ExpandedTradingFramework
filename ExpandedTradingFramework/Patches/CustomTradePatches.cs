@@ -275,32 +275,6 @@ namespace ExpandedTradingFramework.Patches
         }
     }
 
-    [HarmonyPatch(typeof(Utils), nameof(Utils.GetInventoryIconTexture), [typeof(GearItem)])]
-    internal static class UtilsGetInventoryIconTexturePatch
-    {
-        private static bool Prefix(GearItem gi, ref Texture2D __result)
-        {
-            if (gi == null)
-            {
-                __result = null;
-                return false;
-            }
-
-            try
-            {
-                string _ = gi.name;
-            }
-            catch
-            {
-                __result = null;
-                return false;
-            }
-
-            return true;
-        }
-    }
-
-
     [HarmonyPatch(typeof(ExchangeBox), nameof(ExchangeBox.SetActiveTrade))]
     internal static class ExchangeBoxSetActiveTradePatch
     {
@@ -339,6 +313,11 @@ namespace ExpandedTradingFramework.Patches
     internal static class PanelTradeSelectionUpdateSelectedExchangeRequirementsPatch
     {
         private static bool s_LoggedRequirementSlotCount;
+
+        private static void Prefix(Panel_TradeSelection __instance)
+        {
+            CustomTradeRegistry.RestoreTradeSelectionRequirementVisibility(__instance);
+        }
 
         private static void Postfix(Panel_TradeSelection __instance)
         {
