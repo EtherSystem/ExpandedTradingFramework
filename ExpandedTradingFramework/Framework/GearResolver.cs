@@ -5,6 +5,9 @@ namespace ExpandedTradingFramework.Framework
     internal static class GearResolver
     {
         private static readonly Dictionary<string, GearItem> s_PrefabCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, GearItemData> s_DataCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> s_Failed = new(StringComparer.OrdinalIgnoreCase);
+        private static GameObject s_ReferenceRoot;
 
         internal static bool TryResolve(string gearName, out GearItemData gearItemData)
         {
@@ -14,19 +17,24 @@ namespace ExpandedTradingFramework.Framework
             try
             {
                 gearItemData = prefab.GearItemData;
-                if (IsUnityObjectAlive(gearItemData)) return true;
+                if (!IsUnityObjectAlive(gearItemData))
+                {
+                    RemoveCachedGear(gearName);
+                    s_Failed.Add(gearName);
+                    Core.Log?.Error($"GearItem prefab '{gearName}' has no valid GearItemData.");
+                    return false;
+                }
 
-                s_PrefabCache.Remove(gearName);
-                Core.Log?.Error($"GearItem prefab '{gearName}' has no valid GearItemData.");
+                s_DataCache[gearName] = gearItemData;
+                return true;
             }
             catch (Exception e)
             {
-                s_PrefabCache.Remove(gearName);
+                RemoveCachedGear(gearName);
+                s_Failed.Add(gearName);
                 Core.Log?.Error($"Exception while reading GearItemData for '{gearName}': {e}");
+                return false;
             }
-
-            gearItemData = null;
-            return false;
         }
 
         internal static bool TryResolvePrefab(string gearName, out GearItem prefab)
@@ -37,28 +45,70 @@ namespace ExpandedTradingFramework.Framework
             if (s_PrefabCache.TryGetValue(gearName, out prefab))
             {
                 if (IsValidGearPrefab(prefab)) return true;
-                s_PrefabCache.Remove(gearName);
+                RemoveCachedGear(gearName);
+                prefab = null;
             }
 
             try
             {
-                prefab = GearItem.LoadGearItemPrefab(gearName);
+                prefab = GearItem.InstantiateGearItem(gearName);
                 if (!IsValidGearPrefab(prefab))
                 {
-                    Core.Log?.Error($"GearItem.LoadGearItemPrefab('{gearName}') returned no valid prefab or GearItemData.");
-                    prefab = null;
+                    RemoveCachedGear(gearName);
+                    s_Failed.Add(gearName);
+                    if (IsUnityObjectAlive(prefab)) UnityEngine.Object.Destroy(prefab.gameObject);
+                    Core.Log?.Error($"GearItem.InstantiateGearItem('{gearName}') returned no valid GearItem or GearItemData.");
                     return false;
                 }
 
+                EnsureReferenceRoot();
+                prefab.gameObject.SetActive(false);
+                prefab.transform.SetParent(s_ReferenceRoot.transform, false);
+
+                GearItemData gearItemData = prefab.GearItemData;
                 s_PrefabCache[gearName] = prefab;
+                s_DataCache[gearName] = gearItemData;
+                s_Failed.Remove(gearName);
                 return true;
             }
             catch (Exception e)
             {
+                if (IsUnityObjectAlive(prefab)) UnityEngine.Object.Destroy(prefab.gameObject);
+                RemoveCachedGear(gearName);
+                s_Failed.Add(gearName);
                 Core.Log?.Error($"Exception while resolving '{gearName}': {e}");
-                prefab = null;
                 return false;
             }
+        }
+
+        internal static int InvalidateDestroyedCacheEntries(bool clearAll = false)
+        {
+            if (clearAll)
+            {
+                HashSet<string> cachedKeys = new(StringComparer.OrdinalIgnoreCase);
+                foreach (string key in s_PrefabCache.Keys) cachedKeys.Add(key);
+                foreach (string key in s_DataCache.Keys) cachedKeys.Add(key);
+
+                foreach (GearItem item in s_PrefabCache.Values) DestroyReferenceInstance(item);
+                s_PrefabCache.Clear();
+                s_DataCache.Clear();
+                s_Failed.Clear();
+                return cachedKeys.Count;
+            }
+
+            List<string> invalidKeys = [];
+            foreach (KeyValuePair<string, GearItem> pair in s_PrefabCache)
+            {
+                if (!IsValidGearPrefab(pair.Value)) invalidKeys.Add(pair.Key);
+            }
+
+            foreach (KeyValuePair<string, GearItemData> pair in s_DataCache)
+            {
+                if (!IsUnityObjectAlive(pair.Value) && !ContainsString(invalidKeys, pair.Key)) invalidKeys.Add(pair.Key);
+            }
+
+            for (int i = 0; i < invalidKeys.Count; i++) RemoveCachedGear(invalidKeys[i]);
+            return invalidKeys.Count;
         }
 
         internal static bool IsUnityObjectAlive(UnityEngine.Object value)
@@ -110,8 +160,8 @@ namespace ExpandedTradingFramework.Framework
 
             try
             {
-                Texture2D icon = prefab.GetInventoryIconTexture();
-                return CustomTradeIconResolver.IsTextureAlive(icon) ? icon : null;
+                Texture2D texture = prefab.GetInventoryIconTexture();
+                return CustomTradeIconResolver.IsTextureAlive(texture) ? texture : null;
             }
             catch { }
 
@@ -152,6 +202,38 @@ namespace ExpandedTradingFramework.Framework
             {
                 return false;
             }
+        }
+
+        private static void EnsureReferenceRoot()
+        {
+            if (s_ReferenceRoot != null) return;
+            s_ReferenceRoot = new GameObject("ETF_GearReferenceCache");
+            UnityEngine.Object.DontDestroyOnLoad(s_ReferenceRoot);
+            s_ReferenceRoot.SetActive(false);
+        }
+
+        private static void DestroyReferenceInstance(GearItem item)
+        {
+            if (!IsUnityObjectAlive(item)) return;
+            UnityEngine.Object.Destroy(item.gameObject);
+        }
+
+        private static void RemoveCachedGear(string gearName)
+        {
+            if (string.IsNullOrEmpty(gearName)) return;
+            if (s_PrefabCache.TryGetValue(gearName, out GearItem cached)) DestroyReferenceInstance(cached);
+            s_PrefabCache.Remove(gearName);
+            s_DataCache.Remove(gearName);
+        }
+
+        private static bool ContainsString(List<string> values, string value)
+        {
+            for (int i = 0; i < values.Count; i++)
+            {
+                if (string.Equals(values[i], value, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+
+            return false;
         }
 
         private static string NormalizeGearObjectName(string name)
